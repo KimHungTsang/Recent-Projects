@@ -1,0 +1,185 @@
+
+--Creating a table for the bike data in pgAdmin
+create table bike_data (
+	ride_id varchar(100) constraint ride_id_key primary key,
+	rideable_type varchar(50),
+	started_at varchar(100),
+	ended_at varchar(100),
+	start_station_name varchar(200),
+	start_station_id integer,
+	end_station_name varchar(200),
+	end_station_id integer,
+	start_lat numeric,
+	start_lng numeric,
+	end_lat numeric,
+	end_lng numeric,
+	member_casual varchar(50)
+)
+
+--Transferring and copying data into the table
+copy bike_data
+from '/tmp/bike_data_complete2.csv'
+with (format csv, header, delimiter ',')
+
+--Checking if the data was imported properly 
+select * from bike_data
+limit 5
+
+--Changing the data type for the started_at column
+update bike_data
+set started_at = cast(started_at as timestamp)
+
+--Changing the data type for the ended_at column
+update bike_data
+set ended_at = cast(ended_at as timestamp)
+
+--Adding a new column for the starting day of bike rental
+alter table bike_data
+add column  started_at_day integer
+
+-- Extracting data for the started_at_dow column
+update cyclistic_2020
+set started_at_day = extract(dow from started_at)
+
+--Adding a new column for the end day of the bike rental
+Alter table bike_data
+add column ended_at_day integer
+
+--Extracting data for the ended_at_dow column
+update bike_data
+set ended_at_day = extract(dow from ended_at)
+
+--Adding a new column to display the starting rental day in English
+alter table bike_data
+add column started_at_dow varchar(20)
+
+--Extracting data for the started_at_dow column 
+update bike_data
+set started_at_dow = case 
+                     when started_at_day = 0 then 'Sunday'
+	 				 when started_at_day = 1 then 'Monday'
+	 				 when started_at_day = 2 then 'Tuesday'
+	 				 when started_at_day = 3 then 'Wednesday'
+	 				 when started_at_day = 4 then 'Thursday'
+	 				 when started_at_day = 5 then 'Friday'
+	 				 when started_at_day = 6 then 'Saturday'
+					 end
+
+--The process to extract the end day in English for ended_at_dow is the same
+
+--Adding a column called ride duration to the table
+alter table bike_data
+add column ride_duration interval
+
+-- Adding data to the new ride_duration field
+update bike_data
+set ride_duration = (ended_at - started_at)
+
+--Adding another column for ride duration in hours
+alter table bike_data
+add column ride_duration_in_hour numeric
+
+--Adding data to the ride duration in hours column
+update bike_data
+set ride_duration_in_hour = 
+round(extract(epoch from ride_duration)/3600,2)
+
+--Adding a column for the month of the bike rental
+alter table bike_data
+add column rental_month_number integer
+
+--Extracting data for the rental month column
+update bike_data
+set rental_month_number = extract(month from started_at)
+
+--Creating a column to show the rental month in English
+alter table bike_data
+add column rental_month varchar(20)
+
+--Extracting data for the rental month in English column
+update bike_data
+set rental_month = case 
+				   when rental_month_number = 1 then 'January'
+				   when rental_month_number = 2 then 'February'
+				   when rental_month_number = 3 then 'March'
+				   when rental_month_number = 4 then 'April'
+				   when rental_month_number = 5 then 'May'
+				   when rental_month_number = 6 then 'June'
+				   when rental_month_number = 7 then 'July'
+				   when rental_month_number = 8 then 'August'
+				   when rental_month_number = 9 then 'September'
+				   when rental_month_number = 10 then 'October'
+				   when rental_month_number = 11 then 'November'
+				   when rental_month_number = 12 then 'December'
+				   end
+
+--Deleting unneeded columns
+alter table bike_data
+drop column started_day, ended_day, rental_month_number
+
+
+--Analysis
+
+-- Checking the average and median ride time for each customer type
+select member_casual, avg(ride_duration_in_hour), 
+percentile_cont(.5) within group (order by ride_duration_in_hour) as median_trip_duration
+from bike_data
+group by member_casual
+
+-- Checking the average ride time for each customer type during different days of the week
+select member_casual, started_at_dow, avg(ride_duration_in_hour)
+from bike_data
+group by member_casual, started_at_dow
+order by avg(ride_duration_in_hour) desc
+
+-- Checking the number of bike rental transactions during different days of the week for each customer type
+select member_casual, started_at_dow, count(*)
+from bike_data
+group by member_casual, started_at_dow
+order by count(*) desc
+
+— Checking the number of trips over one hour for members and casual riders
+Select member_casual, 
+sum(case when ride_duration_in_hour > 1 then 1
+   		 else 0
+   		 end) as number_of_trips_over_one_hour
+from bike_data
+group by member_casual
+
+-- Checking the busiest day of the week 
+select member_casual, mode() within group (order by started_at_dow)
+from bike_data
+Group by member_casual
+
+-- Making a summary table 
+select member_casual, 
+min(ride_duration_in_hour) as min_ride_length,
+max(ride_duration_in_hour) as max_ride_length,
+avg(ride_duration_in_hour) as avg_ride_length, 
+percentile_cont(.5) within group (order by ride_duration_in_hour) as median_ride_length
+from bike_data
+group by member_casual
+
+--Making a pivot table to summarize trip counts on different day of the week
+select * from crosstab (
+	'select member_casual,
+	started_at_dow,
+	count(*)
+	from bike_data
+	group by member_casual, started_at_dow',
+	
+	'select started_at_dow
+	from bike_data
+	group by started_at_dow'
+)
+
+as (
+	member_casual varchar(20),
+	Sunday bigint,
+	Monday bigint,
+	Tuesday bigint,
+	Wednesday bigint,
+	Thursday bigint,
+	Friday bigint,
+	Saturday bigint
+)
